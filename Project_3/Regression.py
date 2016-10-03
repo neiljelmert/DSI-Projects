@@ -1,4 +1,5 @@
 ################################################################
+################################################################
 
 import datetime
 from datetime import datetime
@@ -6,10 +7,16 @@ import numpy as np
 import pandas as pd
 import patsy
 import re
+import glob
+from cycler import cycler
+from ipywidgets import *
+from IPython.display import display
 
 from sklearn.linear_model import Ridge, Lasso, ElasticNet, LinearRegression, RidgeCV, LassoCV, ElasticNetCV
-from sklearn.cross_validation import cross_val_score
+from sklearn.cross_validation import cross_val_score, cross_val_predict
+from sklearn import metrics
 from sklearn import preprocessing
+from sklearn.preprocessing import StandardScaler
 from sklearn.cross_validation import train_test_split
 
 from sklearn import linear_model
@@ -40,6 +47,11 @@ zillowSF = zillowSF.T.fillna(df.mean(axis=1)).T
 print zillowSF.head()
 '''
 
+
+###################################################################################
+###################################################################################
+###################################################################################
+###################################################################################
 
 # FOOD
 ###################################################################################
@@ -118,8 +130,15 @@ print lma.summary()
 '''
 
 
+###################################################################################
+###################################################################################
+###################################################################################
+###################################################################################
+
 # FIRE
 ###################################################################################
+
+'''
 
 fire_path = "/Users/ga/Desktop/san_francisco/fire_data/fire_incidents.csv"
 
@@ -252,14 +271,14 @@ print fire.dtypes
 print fire.shape
 print fire.corr()
 
-'''sns.set(context="paper", font="monospace")
+sns.set(context="paper", font="monospace")
 #fire = sns.load_dataset("fire", header=[0, 1, 2], index_col=0)
 corrmat = fire.corr()
 f, ax = plt.subplots(figsize = (12,9))
 sns.heatmap(corrmat, square = True)
 plt.xticks(rotation='vertical')
 plt.yticks(rotation = 0)
-sns.plt.show()'''
+sns.plt.show()
 
 X = fire[["Number of floors with significant damage", "Number of floors with heavy damage",
                   "Number of floors with extreme damage", "Alarm Close Diff"]]
@@ -284,4 +303,251 @@ print "intercept:", lm.intercept_
 lma = smf.ols(formula = "Fire Fatalities ~ Alarm Close Diff", data = X).fit()
 print lma.params
 print lma.summary()
+
+'''
+###################################################################################
+###################################################################################
+###################################################################################
+###################################################################################
+# concatenate all assessor csvs from 2007 to 2015
+# assessor data: contains information about yearly house assessments
+# includes attributes of each house: bed no., room no., value, etc.
+
+path = "/Users/ga/Desktop/san_francisco/assessor_office/"
+
+files = []
+for i in range(2007, 2015):
+    file_name = "assessor_data_" + str(i) + "_" + str(i+1) + ".csv"
+    files.append(file_name)
+
+list_ = []
+#frame = pd.DataFrame()
+for f in files:
+    allFiles = glob.glob(path + f)
+
+    for file_ in allFiles:
+        df = pd.read_csv(file_, index_col=None)
+        list_.append(df)
+        #print file_, df.columns
+
+assessor = pd.concat(list_)
+
+##################################################################################
+# CLEAN, CLEAN, CLEAN...
+
+assessor.drop(["BASELOTSFX", "BUILTIN", "CONSTTYPE", "EXEMPTYPE",
+               "KITCHEN", "LOTCODE", "REMARKFLA", "REPRISDATE",
+               "RP1CLACDE", "RP1DOCNO1", "RP1NBRCDE",
+               "RP1STACDE", "ZONE", "PROPLOC", "RP1PRCLID",
+               "OWNRPRCNT", "RECURRSALD", "RP1TRACDE"], axis=1, inplace=True)
+
+assessor["BASELOT"] = assessor["BASELOT"].fillna(np.mean(assessor["BASELOT"]))
+assessor["FBA"] = assessor["FBA"].fillna(np.mean(assessor["FBA"]))
+assessor["LAREA"] = assessor["LAREA"].fillna(np.mean(assessor["LAREA"]))
+
+bed_mean = assessor["BEDS"][assessor["BEDS"] != 0].mean()
+assessor["BEDS"] = assessor["BEDS"].replace(0, bed_mean)
+assessor = assessor.dropna(axis=0, how="any").reset_index(drop=True)
+
+yr_dict = {95: 1995, 13: 1913, 9185: 1985, 6889: 1989, 6573: 1973,
+           8687: 1987, 24: 1924, 21: 1921, 22: 1922, 41: 1941}
+
+assessor["YRBLT"].replace(yr_dict, inplace=True)
+assessor = assessor[assessor["YRBLT"] < 2017]
+assessor = assessor[assessor["YRBLT"] > 1600]
+
+valcols = ["RP1FXTVAL", "RP1IMPVAL", "RP1LNDVAL", "RP1PPTVAL"]
+assessor["VALUE"] = assessor[valcols].sum(axis=1)
+assessor = assessor.iloc[:, ~assessor.columns.isin(valcols)]
+
+# print assessor.shape (1483188, 20)
+
+for col in ["UNITS", "STOREYNO", "SQFT", "ROOMS", "BEDS", "BATHS"]:
+    assessor = assessor[assessor[col] != 0]
+
+assessor = assessor[assessor["VALUE"] > 20000].reset_index(drop=True)
+
+# print assessor.shape (1154771, 20)
+
+###################################################################################
+# visualize correlation among features
+
+corrmat = assessor.corr()
+f, ax = plt.subplots(figsize = (12,9))
+sns.heatmap(corrmat, square = True)
+plt.xticks(rotation='vertical')
+plt.yticks(rotation = 0)
+sns.plt.show()
+
+####################################################################################
+# create the predictors and target
+# we will predict home value based on the features strongest correlated to value:
+# baths, rooms, sqft, storeyno, units
+
+# Hypothesis: The value of a home depends on the above features
+
+X = assessor[["RP1DOCNO2", "BATHS", "ROOMS", "STOREYNO", "SQFT", "UNITS"]]
+y = assessor[["VALUE"]]
+
+####################################################################################
+#scale the predictors and target
+
+scaler = StandardScaler()
+X_norm = scaler.fit_transform(X)
+y_norm = scaler.fit_transform(y)
+
+
+####################################################################################
+# Linear Regression
+
+lm = linear_model.LinearRegression()
+model = lm.fit(X_norm,y_norm)
+predictions = lm.predict(X_norm)
+fig = plt.figure(figsize = (10,6))
+plt.scatter(predictions, y_norm, s=100, c='b', marker = '+')
+plt.xlabel("Predicted Vals")
+plt.ylabel("Actual Vals")
+sns.plt.show()
+
+print "MSE:", mean_squared_error(y_norm, predictions)
+print "R2:", model.score(X_norm,y_norm)
+print "Coeffs:", model.coef_
+print "intercept:", lm.intercept_
+
+
+###################################################################################
+# SMF OLS Summary
+
+X2 = assessor[["VALUE", "UNITS", "STOREYNO", "SQFT", "ROOMS", "FRONT",
+              "FBA", "BEDS", "BATHS"]]
+
+lma = smf.ols(formula = 'VALUE ~ UNITS + STOREYNO + SQFT + ROOMS + BATHS',
+              data = X2).fit()
+print lma.params
+print lma.summary()
+
+
+#####################################################################################
+# Train Test Split using Linear Regression
+
+X_train, X_test, y_train, y_test = train_test_split(X_norm, y_norm, train_size = 0.75)
+
+lm_tts = linear_model.LinearRegression()
+model = lm_tts.fit(X_train, y_train)
+predictions_tts = lm_tts.predict(X_test)
+
+plt.scatter(y_test, predictions_tts)
+plt.xlabel("Truth")
+plt.ylabel("Pred")
+sns.plt.show()
+
+print " TTS score:", model.score(X_test, y_test)
+
+###################################################################################
+# K-Fold Cross-Validation using Linear Regression
+
+lm_cv = linear_model.LinearRegression()
+scores = cross_val_score(lm_cv, X_norm, y_norm, cv = 5)
+print "Cross-validated score:", scores
+
+predictions_cross = cross_val_predict(lm_cv, X_norm, y_norm, cv = 5)
+plt.scatter(y_norm, predictions_cross)
+plt.xlabel("Truth")
+plt.ylabel("Pred")
+sns.plt.show()
+
+accuracy = metrics.r2_score(y_norm, predictions_cross)
+print "Cross-Predicted Accuracy:", accuracy
+print "K-Fold Mean Scores:", np.mean(scores)
+
+###################################################################################
+# Visualizing the Ridge, Lasso, and Elastic on our dataset
+
+simple_feature_names = ["UNITS", "STOREYNO", "SQFT", "ROOMS", "BATHS"]
+
+def ridge_coefs(X, y, alphas):
+    coefs = []
+    ridge_reg = Ridge()
+    for a in alphas:
+        ridge_reg.set_params(alpha=a)
+        ridge_reg.fit(X, y)
+        coefs.append(ridge_reg.coef_[0])
+    return coefs
+
+r_alphas = np.logspace(0, 10, 200)
+r_coefs = ridge_coefs(X_norm, y_norm, r_alphas)
+
+def coef_plotter(alphas, coefs, feature_names, to_alpha, regtype='ridge'):
+    amin = np.min(alphas)
+    amax = np.max(alphas)
+    alphas = [a for a in alphas if a <= to_alpha]
+    coefs = coefs[0:len(alphas)]
+    colors = sns.color_palette("husl", len(coefs[0]))
+    fig = plt.figure()
+    fig.set_size_inches(18, 5)
+    ax1 = fig.add_subplot(121)
+    ax1.set_prop_cycle(cycler('color', colors))
+    ax1.axvline(to_alpha, lw=2, ls='dashed', c='k', alpha=0.4)
+    ax1.plot(alphas, coefs, lw=2)
+    ax1.set_xlabel('alpha', fontsize=20)
+    ax1.set_ylabel('coefficients', fontsize=20)
+    if regtype == 'ridge':
+        ax1.set_xscale('log')
+    ax1.set_xlim([amin, amax])
+    ax1.set_title(regtype + ' coef paths\n', fontsize=20)
+    ymin, ymax = ax1.get_ylim()
+    ax2 = fig.add_subplot(122)
+    ax2.bar(range(1, len(feature_names) + 1), coefs[-1], align='center', color=colors)
+    ax2.set_xticks(range(1, len(feature_names) + 1))
+    ax2.set_xticklabels(feature_names, rotation=65, fontsize=12)
+    ax2.set_ylim([ymin, ymax])
+    ax2.set_title(regtype + ' predictor coefs\n', fontsize=20)
+    ax2.set_xlabel('coefficients', fontsize=20)
+    ax2.set_ylabel('alpha', fontsize=20)
+    plt.show()
+
+### RIDGE
+
+def ridge_plot_runner(log_of_alpha=0):
+    coef_plotter(r_alphas, r_coefs, simple_feature_names, 10**log_of_alpha, regtype='ridge')
+
+interact(ridge_plot_runner, log_of_alpha=(0.0,10.0,0.05))
+
+### LASSO
+
+def lasso_coefs(X, Y, alphas):
+    coefs = []
+    lasso_reg = Lasso()
+    for a in alphas:
+        lasso_reg.set_params(alpha=a)
+        lasso_reg.fit(X, Y)
+        coefs.append(lasso_reg.coef_)
+    return coefs
+
+l_alphas = np.arange(0.01, 1, 0.0025)
+l_coefs = lasso_coefs(X_norm, y_norm, l_alphas)
+
+def lasso_plot_runner(alpha=0):
+    coef_plotter(l_alphas, l_coefs, simple_feature_names, alpha, regtype='lasso')
+
+interact(lasso_plot_runner, alpha=(0.01,1,0.0025))
+
+### ELASTIC
+
+def elasticnet_coefs(X, Y, alphas):
+    coefs = []
+    enet_reg = ElasticNet()
+    for a in alphas:
+        enet_reg.set_params(alpha=a, l1_ratio=0.05)
+        enet_reg.fit(X, Y)
+        coefs.append(enet_reg.coef_)
+    return coefs
+
+enet_alphas = np.arange(0.001, 2.0, 0.005)
+enet_coefs = elasticnet_coefs(X_norm, y_norm, enet_alphas)
+
+def enet_plot_runner(alpha=0):
+    coef_plotter(enet_alphas, enet_coefs, simple_feature_names, alpha, regtype='elastic net')
+
+interact(enet_plot_runner, alpha=(0.001,2.0,0.005))
 
