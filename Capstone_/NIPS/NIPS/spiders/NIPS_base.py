@@ -21,6 +21,7 @@ class NipsBaseSpider(scrapy.Spider):
 				'http://papers.nips.cc/book/advances-in-neural-information-processing-systems-23-2010',
 				'http://papers.nips.cc/book/advances-in-neural-information-processing-systems-22-2009', 
 				'http://papers.nips.cc/book/advances-in-neural-information-processing-systems-21-2008']
+	custom_settings = {'DOWNLOAD_DELAY': 2}
 
 	def parse(self, response):
 
